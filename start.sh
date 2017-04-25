@@ -8,8 +8,33 @@ if [[ ! -z "$DEBUG" ]]; then
 fi
 
 ## Local IP address setting
+: ${LOCAL_IP='auto'}
+if [ "$LOCAL_IP" = 'auto' ]; then
+	if [ $USE_RANCHER_IP == true ]; then
+		LOCAL_IP=$(curl http://rancher-metadata.rancher.internal/latest/self/container/primary_ip)
+	else
+		LOCAL_IP=$(hostname -i |grep -E -oh '((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])'|head -n 1)
+	fi
+fi
+echo "LOCAL_IP: $LOCAL_IP"
 
-LOCAL_IP=$(hostname -i |grep -E -oh '((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])'|head -n 1)
+# If we're given EMQ_RANCHER_CLUSTER_SERVICE, then use the ips
+# from these services to join the cluster
+CLUSTER_IP='x'
+if [ -n "${EMQ_RANCHER_CLUSTER_SERVICE}" ]; then
+  for SERVICE_IP in $(dig +short $EMQ_RANCHER_CLUSTER_SERVICE | grep -v $LOCAL_IP); do
+    if [ $SERVICE_IP != $LOCAL_IP ]; then
+      CLUSTER_IP=$SERVICE_IP
+      break
+    fi
+  done
+
+  if [ $CLUSTER_IP != "x" ]; then
+    EMQ_JOIN_CLUSTER="EMQ@$CLUSTER_IP"
+  fi
+
+  echo "EMQ_JOIN_CLUSTER: $EMQ_JOIN_CLUSTER"
+fi
 
 ## EMQ Base settings and plugins setting
 # Base settings in /opt/emqttd/etc/emq.conf
@@ -26,7 +51,7 @@ if [[ -z "$PLATFORM_LOG_DIR" ]]; then
 fi
 
 if [[ -z "$EMQ_NAME" ]]; then
-    export EMQ_NAME="$(hostname)"
+    export EMQ_NAME="EMQ"
 fi
 
 if [[ -z "$EMQ_HOST" ]]; then
@@ -47,15 +72,15 @@ fi
 # unset EMQ_HOST
 
 if [[ -z "$EMQ_NODE__PROCESS_LIMIT" ]]; then
-    export EMQ_NODE__PROCESS_LIMIT=2097152
+    export EMQ_NODE__PROCESS_LIMIT=256000
 fi
 
 if [[ -z "$EMQ_NODE__MAX_PORTS" ]]; then
-    export EMQ_NODE__MAX_PORTS=1048576
+    export EMQ_NODE__MAX_PORTS=65536
 fi
 
 if [[ -z "$EMQ_NODE__MAX_ETS_TABLES" ]]; then
-    export EMQ_NODE__MAX_ETS_TABLES=2097152
+    export EMQ_NODE__MAX_ETS_TABLES=256000
 fi
 
 if [[ -z "$EMQ_LOG__CONSOLE" ]]; then
@@ -63,27 +88,27 @@ if [[ -z "$EMQ_LOG__CONSOLE" ]]; then
 fi
 
 if [[ -z "$EMQ_MQTT__LISTENER__TCP__ACCEPTORS" ]]; then
-    export EMQ_MQTT__LISTENER__TCP__ACCEPTORS=64
+    export EMQ_MQTT__LISTENER__TCP__ACCEPTORS=8
 fi
 
 if [[ -z "$EMQ_MQTT__LISTENER__TCP__MAX_CLIENTS" ]]; then
-    export EMQ_MQTT__LISTENER__TCP__MAX_CLIENTS=1000000
+    export EMQ_MQTT__LISTENER__TCP__MAX_CLIENTS=1024
 fi
 
 if [[ -z "$EMQ_MQTT__LISTENER__SSL__ACCEPTORS" ]]; then
-    export EMQ_MQTT__LISTENER__SSL__ACCEPTORS=32
+    export EMQ_MQTT__LISTENER__SSL__ACCEPTORS=4
 fi
 
 if [[ -z "$EMQ_MQTT__LISTENER__SSL__MAX_CLIENTS" ]]; then
-    export EMQ_MQTT__LISTENER__SSL__MAX_CLIENTS=500000
+    export EMQ_MQTT__LISTENER__SSL__MAX_CLIENTS=512
 fi
 
 if [[ -z "$EMQ_MQTT__LISTENER__HTTP__ACCEPTORS" ]]; then
-    export EMQ_MQTT__LISTENER__HTTP__ACCEPTORS=16
+    export EMQ_MQTT__LISTENER__HTTP__ACCEPTORS=4
 fi
 
 if [[ -z "$EMQ_MQTT__LISTENER__HTTP__MAX_CLIENTS" ]]; then
-    export EMQ_MQTT__LISTENER__HTTP__MAX_CLIENTS=250000
+    export EMQ_MQTT__LISTENER__HTTP__MAX_CLIENTS=64
 fi
 
 # Catch all EMQ_ prefix environment variable and match it in configure file
@@ -91,20 +116,24 @@ CONFIG=/opt/emqttd/etc/emq.conf
 CONFIG_PLUGINS=/opt/emqttd/etc/plugins
 for VAR in $(env)
 do
+    echo $VAR
     # Config normal keys such like node.name = emqttd@127.0.0.1
     if [[ ! -z "$(echo $VAR | grep -E '^EMQ_')" ]]; then
-        VAR_NAME=$(echo "$VAR" | sed -r "s/EMQ_(.*)=.*/\1/g" | tr '[:upper:]' '[:lower:]' | sed -r "s/__/\./g")
-        VAR_FULL_NAME=$(echo "$VAR" | sed -r "s/(.*)=.*/\1/g")
+        VAR_NAME=$(echo "$VAR" | sed -r "s|EMQ_(.*)=.*|\1|g" | tr '[:upper:]' '[:lower:]' | sed -r "s|__|\.|g")
+        VAR_FULL_NAME=$(echo "$VAR" | sed -r "s|(.*)=.*|\1|g")
+        # echo "$VAR_NAME=$(eval echo \$$VAR_FULL_NAME)"
+        # sed -r -i "s|(^#*\s*)($VAR_NAME)\s*=\s*(.*)|\2 = $(eval echo \$$VAR_FULL_NAME)|g" $CONFIG
+
         # Config in emq.conf
         if [[ ! -z "$(cat $CONFIG |grep -E "^(^|^#*|^#*s*)$VAR_NAME")" ]]; then
             echo "$VAR_NAME=$(eval echo \$$VAR_FULL_NAME)"
-            sed -r -i "s/(^#*\s*)($VAR_NAME)\s*=\s*(.*)/\2 = $(eval echo \$$VAR_FULL_NAME)/g" $CONFIG
+            sed -r -i "s|(^#*\s*)($VAR_NAME)\s*=\s*(.*)|\2 = $(eval echo \$$VAR_FULL_NAME)|g" $CONFIG
         fi
         # Config in plugins/*
         if [[ ! -z "$(cat $CONFIG_PLUGINS/* |grep -E "^(^|^#*|^#*s*)$VAR_NAME")" ]]; then
             echo "$VAR_NAME=$(eval echo \$$VAR_FULL_NAME)"
-            sed -r -i "s/(^#*\s*)($VAR_NAME)\s*=\s*(.*)/\2 = $(eval echo \$$VAR_FULL_NAME)/g" $(ls $CONFIG_PLUGINS/*)
-        fi        
+            sed -r -i "s|(^#*\s*)($VAR_NAME)\s*=\s*(.*)|\2 = $(eval echo \$$VAR_FULL_NAME)|g" $(ls $CONFIG_PLUGINS/*)
+        fi
     fi
     # Config template such like {{ platform_etc_dir }}
     if [[ ! -z "$(echo $VAR | grep -E '^PLATFORM_')" ]]; then
@@ -171,7 +200,7 @@ fi
 #          and docker dispatching system can known and restart this container.
 IDLE_TIME=0
 while [[ $IDLE_TIME -lt 5 ]]
-do  
+do
     IDLE_TIME=$((IDLE_TIME+1))
     if [[ ! -z "$(/opt/emqttd/bin/emqttd_ctl status |grep 'is running'|awk '{print $1}')" ]]; then
         IDLE_TIME=0

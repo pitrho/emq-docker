@@ -2,9 +2,7 @@ FROM alpine:3.5
 
 MAINTAINER Huang Rui <vowstar@gmail.com>, Turtle <turtled@emqtt.io>
 
-ENV EMQ_VERSION=v2.1.2
-
-COPY ./start.sh /start.sh
+ENV EMQ_VERSION=v2.1.0-beta.2
 
 RUN set -ex \
     # add build deps, remove after build
@@ -76,6 +74,8 @@ RUN set -ex \
         ncurses-terminfo \
         ncurses-libs \
         readline \
+        curl \
+        bind-tools \
     # add latest rebar
     && wget https://github.com/rebar/rebar/wiki/rebar -O /usr/bin/rebar \
     && chmod +x /usr/bin/rebar \
@@ -84,8 +84,6 @@ RUN set -ex \
     && make \
     && mkdir -p /opt && mv /emqttd/_rel/emqttd /opt/emqttd \
     && cd / && rm -rf /emqttd \
-    && mv /start.sh /opt/emqttd/start.sh \
-    && chmod +x /opt/emqttd/start.sh \
     && ln -s /opt/emqttd/bin/* /usr/local/bin/ \
     # remove rebar
     && rm -rf /usr/bin/rebar \
@@ -93,6 +91,8 @@ RUN set -ex \
     && apk --purge del .build-deps .fetch-deps \
     && rm -rf /var/cache/apk/*
 
+COPY ./start.sh /opt/emqttd/start.sh
+RUN chmod +x /opt/emqttd/start.sh
 WORKDIR /opt/emqttd
 
 # start emqttd and initial environments
