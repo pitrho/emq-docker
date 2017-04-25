@@ -2,7 +2,7 @@ FROM alpine:3.5
 
 MAINTAINER Huang Rui <vowstar@gmail.com>, Turtle <turtled@emqtt.io>
 
-ENV EMQ_VERSION=v2.1.0-beta.2
+ENV EMQ_VERSION=v2.1.2
 
 RUN set -ex \
     # add build deps, remove after build
