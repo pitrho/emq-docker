@@ -98,7 +98,7 @@ WORKDIR /opt/emqttd
 # start emqttd and initial environments
 CMD ["/opt/emqttd/start.sh"]
 
-VOLUME ["/opt/emqttd/log", "/opt/emqttd/data", "/opt/emqttd/lib", "/opt/emqttd/etc"]
+# VOLUME ["/opt/emqttd/log", "/opt/emqttd/data", "/opt/emqttd/lib", "/opt/emqttd/etc"]
 
 # emqttd will occupy these port:
 # - 1883 port for MQTT
@@ -107,5 +107,5 @@ VOLUME ["/opt/emqttd/log", "/opt/emqttd/data", "/opt/emqttd/lib", "/opt/emqttd/e
 # - 8084 for WSS/HTTPS
 # - 18083 for dashboard
 # - 4369 for port mapping
-# - 6000-6999 for distributed node
-EXPOSE 1883 8883 8083 8084 18083 4369 6000-6999
+# - 6000-6009 for distributed node
+EXPOSE 1883 8883 8083 8084 18083 4369 6000-6009
