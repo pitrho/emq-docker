@@ -9,8 +9,9 @@ fi
 
 ## Local IP address setting
 : ${LOCAL_IP='auto'}
+: ${USE_RANCHER_IP=false}
 if [ "$LOCAL_IP" = 'auto' ]; then
-	if [ $USE_RANCHER_IP == true ]; then
+	if [ $USE_RANCHER_IP = true ]; then
 		LOCAL_IP=$(curl http://rancher-metadata.rancher.internal/latest/self/container/primary_ip)
 	else
 		LOCAL_IP=$(hostname -i |grep -E -oh '((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])'|head -n 1)
@@ -48,6 +49,10 @@ fi
 
 if [[ -z "$PLATFORM_LOG_DIR" ]]; then
     export PLATFORM_LOG_DIR="$_EMQ_HOME/log"
+fi
+
+if [[ -z "$EMQ_LOG__ERROR__FILE" ]]; then
+    export EMQ_LOG__ERROR__FILE="${PLATFORM_LOG_DIR}/error.log"
 fi
 
 if [[ -z "$EMQ_NAME" ]]; then
@@ -116,21 +121,21 @@ CONFIG=/opt/emqttd/etc/emq.conf
 CONFIG_PLUGINS=/opt/emqttd/etc/plugins
 for VAR in $(env)
 do
-    echo $VAR
     # Config normal keys such like node.name = emqttd@127.0.0.1
     if [[ ! -z "$(echo $VAR | grep -E '^EMQ_')" ]]; then
         VAR_NAME=$(echo "$VAR" | sed -r "s|EMQ_(.*)=.*|\1|g" | tr '[:upper:]' '[:lower:]' | sed -r "s|__|\.|g")
+        echo "$VAR == $VAR_NAME"
         VAR_FULL_NAME=$(echo "$VAR" | sed -r "s|(.*)=.*|\1|g")
         # echo "$VAR_NAME=$(eval echo \$$VAR_FULL_NAME)"
         # sed -r -i "s|(^#*\s*)($VAR_NAME)\s*=\s*(.*)|\2 = $(eval echo \$$VAR_FULL_NAME)|g" $CONFIG
 
         # Config in emq.conf
-        if [[ ! -z "$(cat $CONFIG |grep -E "^(^|^#*|^#*s*)$VAR_NAME")" ]]; then
+        if [[ ! -z "$(cat $CONFIG |grep -E "^(^|^#*|^#*\s*)$VAR_NAME")" ]]; then
             echo "$VAR_NAME=$(eval echo \$$VAR_FULL_NAME)"
             sed -r -i "s|(^#*\s*)($VAR_NAME)\s*=\s*(.*)|\2 = $(eval echo \$$VAR_FULL_NAME)|g" $CONFIG
         fi
         # Config in plugins/*
-        if [[ ! -z "$(cat $CONFIG_PLUGINS/* |grep -E "^(^|^#*|^#*s*)$VAR_NAME")" ]]; then
+        if [[ ! -z "$(cat $CONFIG_PLUGINS/* |grep -E "^(^|^#*|^#*\s*)$VAR_NAME")" ]]; then
             echo "$VAR_NAME=$(eval echo \$$VAR_FULL_NAME)"
             sed -r -i "s|(^#*\s*)($VAR_NAME)\s*=\s*(.*)|\2 = $(eval echo \$$VAR_FULL_NAME)|g" $(ls $CONFIG_PLUGINS/*)
         fi
@@ -194,25 +199,7 @@ if [[ ! -z "$EMQ_ADMIN_PASSWORD" ]]; then
     /opt/emqttd/bin/emqttd_ctl admins passwd admin $EMQ_ADMIN_PASSWORD &
 fi
 
-# monitor emqttd is running, or the docker must stop to let docker PaaS know
-# warning: never use infinite loops such as `` while true; do sleep 1000; done`` here
-#          you must let user know emqtt crashed and stop this container,
-#          and docker dispatching system can known and restart this container.
-IDLE_TIME=0
-while [[ $IDLE_TIME -lt 5 ]]
-do
-    IDLE_TIME=$((IDLE_TIME+1))
-    if [[ ! -z "$(/opt/emqttd/bin/emqttd_ctl status |grep 'is running'|awk '{print $1}')" ]]; then
-        IDLE_TIME=0
-    else
-        echo "['$(date -u +"%Y-%m-%dT%H:%M:%SZ")']:emqttd not running, waiting for recovery in $((25-IDLE_TIME*5)) seconds"
-    fi
-    sleep 5
-done
-# If running to here (the result 5 times not is running, thus in 25s emq is not running), exit docker image
-# Then the high level PaaS, e.g. docker swarm mode, will know and alert, rebanlance this service
-
-# tail $(ls /opt/emqttd/log/*)
-
-echo "['$(date -u +"%Y-%m-%dT%H:%M:%SZ")']:emqttd exit abnormally"
-exit 1
+if [[ -p $EMQ_LOG__ERROR__FILE ]]; then
+  mkfifo $EMQ_LOG__ERROR__FILE
+fi
+tail -f $EMQ_LOG__ERROR__FILE
