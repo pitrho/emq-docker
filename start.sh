@@ -41,7 +41,7 @@ fi
 # Base settings in /opt/emqttd/etc/emq.conf
 # Plugin settings in /opt/emqttd/etc/plugins
 
-_EMQ_HOME="/opt/emqtt"
+_EMQ_HOME="/opt/emqttd"
 
 if [[ -z "$PLATFORM_ETC_DIR" ]]; then
     export PLATFORM_ETC_DIR="$_EMQ_HOME/etc"
@@ -63,57 +63,71 @@ if [[ -z "$EMQ_HOST" ]]; then
     export EMQ_HOST="$LOCAL_IP"
 fi
 
+if [[ -z "$EMQ_WAIT_TIME" ]]; then
+    export EMQ_WAIT_TIME=5
+fi
+
 if [[ -z "$EMQ_NODE__NAME" ]]; then
     export EMQ_NODE__NAME="$EMQ_NAME@$EMQ_HOST"
 fi
 
+if [[ -z "$EMQ_NODE__COOKIE" ]]; then
+    export EMQ_NODE__COOKIE="emq_dist_cookie"
+fi
+
 # Set hosts to prevent cluster mode failed
 
-if [[ ! -z "$LOCAL_IP" && ! -z "$EMQ_HOST" ]]; then
-    echo "$LOCAL_IP        $EMQ_HOST" >> /etc/hosts
-fi
+# if [[ ! -z "$LOCAL_IP" && ! -z "$EMQ_HOST" ]]; then
+#     echo "$LOCAL_IP        $EMQ_HOST" >> /etc/hosts
+# fi
 
 # unset EMQ_NAME
 # unset EMQ_HOST
 
 if [[ -z "$EMQ_NODE__PROCESS_LIMIT" ]]; then
-    export EMQ_NODE__PROCESS_LIMIT=256000
+    export EMQ_NODE__PROCESS_LIMIT=2097152
 fi
 
 if [[ -z "$EMQ_NODE__MAX_PORTS" ]]; then
-    export EMQ_NODE__MAX_PORTS=65536
+    export EMQ_NODE__MAX_PORTS=1048576
 fi
 
 if [[ -z "$EMQ_NODE__MAX_ETS_TABLES" ]]; then
-    export EMQ_NODE__MAX_ETS_TABLES=256000
+    export EMQ_NODE__MAX_ETS_TABLES=2097152
 fi
 
 if [[ -z "$EMQ_LOG__CONSOLE" ]]; then
     export EMQ_LOG__CONSOLE="console"
 fi
 
-if [[ -z "$EMQ_MQTT__LISTENER__TCP__ACCEPTORS" ]]; then
-    export EMQ_MQTT__LISTENER__TCP__ACCEPTORS=8
+if [[ -z "$EMQ_LISTENER__TCP__EXTERNAL__ACCEPTORS" ]]; then
+    export EMQ_LISTENER__TCP__EXTERNAL__ACCEPTORS=64
 fi
 
-if [[ -z "$EMQ_MQTT__LISTENER__TCP__MAX_CLIENTS" ]]; then
-    export EMQ_MQTT__LISTENER__TCP__MAX_CLIENTS=1024
+if [[ -z "$EMQ_LISTENER__TCP__EXTERNAL__MAX_CLIENTS" ]]; then
+    export EMQ_LISTENER__TCP__EXTERNAL__MAX_CLIENTS=1000000
 fi
 
-if [[ -z "$EMQ_MQTT__LISTENER__SSL__ACCEPTORS" ]]; then
-    export EMQ_MQTT__LISTENER__SSL__ACCEPTORS=4
+if [[ -z "$EMQ_LISTENER__SSL__EXTERNAL__ACCEPTORS" ]]; then
+    export EMQ_LISTENER__SSL__EXTERNAL__ACCEPTORS=32
 fi
 
-if [[ -z "$EMQ_MQTT__LISTENER__SSL__MAX_CLIENTS" ]]; then
-    export EMQ_MQTT__LISTENER__SSL__MAX_CLIENTS=512
+if [[ -z "$EMQ_LISTENER__SSL__EXTERNAL__MAX_CLIENTS" ]]; then
+    export EMQ_LISTENER__SSL__EXTERNAL__MAX_CLIENTS=500000
 fi
 
-if [[ -z "$EMQ_MQTT__LISTENER__HTTP__ACCEPTORS" ]]; then
-    export EMQ_MQTT__LISTENER__HTTP__ACCEPTORS=4
+if [[ -z "$EMQ_LISTENER__WS__EXTERNAL__ACCEPTORS" ]]; then
+    export EMQ_LISTENER__WS__EXTERNAL__ACCEPTORS=16
 fi
 
-if [[ -z "$EMQ_MQTT__LISTENER__HTTP__MAX_CLIENTS" ]]; then
-    export EMQ_MQTT__LISTENER__HTTP__MAX_CLIENTS=64
+if [[ -z "$EMQ_LISTENER__WS__EXTERNAL__MAX_CLIENTS" ]]; then
+    export EMQ_LISTENER__WS__EXTERNAL__MAX_CLIENTS=250000
+fi
+
+# Fix issue #42 - export env EMQ_DASHBOARD__DEFAULT_USER__PASSWORD to configure
+# 'dashboard.default_user.password' in etc/plugins/emq_dashboard.conf
+if [[ ! -z "$EMQ_ADMIN_PASSWORD" ]]; then
+    export EMQ_DASHBOARD__DEFAULT_USER__PASSWORD=$EMQ_ADMIN_PASSWORD
 fi
 
 # Catch all EMQ_ prefix environment variable and match it in configure file
@@ -124,10 +138,7 @@ do
     # Config normal keys such like node.name = emqttd@127.0.0.1
     if [[ ! -z "$(echo $VAR | grep -E '^EMQ_')" ]]; then
         VAR_NAME=$(echo "$VAR" | sed -r "s|EMQ_(.*)=.*|\1|g" | tr '[:upper:]' '[:lower:]' | sed -r "s|__|\.|g")
-        echo "$VAR == $VAR_NAME"
         VAR_FULL_NAME=$(echo "$VAR" | sed -r "s|(.*)=.*|\1|g")
-        # echo "$VAR_NAME=$(eval echo \$$VAR_FULL_NAME)"
-        # sed -r -i "s|(^#*\s*)($VAR_NAME)\s*=\s*(.*)|\2 = $(eval echo \$$VAR_FULL_NAME)|g" $CONFIG
 
         # Config in emq.conf
         if [[ ! -z "$(cat $CONFIG |grep -E "^(^|^#*|^#*\s*)$VAR_NAME")" ]]; then
@@ -164,18 +175,21 @@ fi
 
 /opt/emqttd/bin/emqttd foreground &
 
-# wait and ensure emqttd status is running
+# Wait and ensure emqttd status is running
 WAIT_TIME=0
 while [[ -z "$(/opt/emqttd/bin/emqttd_ctl status |grep 'is running'|awk '{print $1}')" ]]
 do
     sleep 1
     echo "['$(date -u +"%Y-%m-%dT%H:%M:%SZ")']:waiting emqttd"
     WAIT_TIME=$((WAIT_TIME+1))
-    if [[ $WAIT_TIME -gt 5 ]]; then
+    if [[ $WAIT_TIME -gt $EMQ_WAIT_TIME ]]; then
         echo "['$(date -u +"%Y-%m-%dT%H:%M:%SZ")']:timeout error"
         exit 1
     fi
 done
+
+# Sleep 5 seconds to wait for the loaded plugins catch up.
+sleep 5
 
 echo "['$(date -u +"%Y-%m-%dT%H:%M:%SZ")']:emqttd start"
 
@@ -199,7 +213,4 @@ if [[ ! -z "$EMQ_ADMIN_PASSWORD" ]]; then
     /opt/emqttd/bin/emqttd_ctl admins passwd admin $EMQ_ADMIN_PASSWORD &
 fi
 
-if [[ -p $EMQ_LOG__ERROR__FILE ]]; then
-  mkfifo $EMQ_LOG__ERROR__FILE
-fi
 tail -f $EMQ_LOG__ERROR__FILE

@@ -1,5 +1,8 @@
 # Changelog
 
+## v0.3.0 (2018-03-21)
+* Upgraded to emqtt v2.3.5
+
 ## v0.2.1 (2017-04-26)
 * Removed volumes from Dockerfile.
 * Bug fix to exposeExposed less distributed node ports since this causes
